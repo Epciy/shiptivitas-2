@@ -1,5 +1,7 @@
-import express from 'express';
-import Database from 'better-sqlite3';
+//import express from 'express';
+const express=require('express')
+const Database=require('better-sqlite3');
+//import Database from 'better-sqlite3';
 
 const app = express();
 
@@ -126,9 +128,46 @@ app.put('/api/v1/clients/:id', (req, res) => {
   const client = clients.find(client => client.id === id);
 
   /* ---------- Update code below ----------*/
+  if (client) {
+  if (status && ['backlog', 'in-progress', 'complete'].includes(status)) {
+    client.status = status;
+  }
 
+  // Update client priority if provided
+  if (priority !== undefined) {
+    
+    if (priority < 1 || priority > clients.length) {
+      return res.status(400).send({ error: 'Invalid priority value.' });
+    }
 
+    
+    const clientsWithSameStatus = clients.filter(c => c.status === client.status && c.id !== id);
+    const conflictingPriorityClient = clientsWithSameStatus.find(c => c.priority === priority);
 
+    if (conflictingPriorityClient) {
+      return res.status(400).send({ error: 'Priority conflict with another client.' });
+    }
+
+    
+    client.priority = priority;
+    clientsWithSameStatus.forEach(c => {
+      if (c.priority >= priority) {
+        c.priority++;
+      }
+    });
+  }
+
+  db.prepare('UPDATE clients SET status = ?, priority = ? WHERE id = ?').run(client.status, client.priority, id);
+
+  clients.sort((a, b) => {
+    if (a.status !== b.status) {
+      return a.status.localeCompare(b.status);
+    }
+    return a.priority - b.priority;
+  });
+} else {
+  return res.status(404).send({ error: 'Client not found.' });
+}
   return res.status(200).send(clients);
 });
 
