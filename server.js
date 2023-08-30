@@ -128,46 +128,68 @@ app.put('/api/v1/clients/:id', (req, res) => {
   const client = clients.find(client => client.id === id);
 
   /* ---------- Update code below ----------*/
-  if (client) {
-  if (status && ['backlog', 'in-progress', 'complete'].includes(status)) {
-    client.status = status;
+  
+  if (status) {
+    // status can only be either 'backlog' | 'in-progress' | 'complete'
+    if (status !== 'backlog' && status !== 'in-progress' && status !== 'complete') {
+       return res.status(400).send({
+         'message': 'Invalid status provided.',
+        'long_message': 'Status can only be one of the following: [backlog | in-progress | complete].',
+      });
+    }
   }
+  const newStatus = status;
+  const oldStatus = client.status;
+  const oldPriority = client.priority;
 
-  // Update client priority if provided
-  if (priority !== undefined) {
-    
-    if (priority < 1 || priority > clients.length) {
-      return res.status(400).send({ error: 'Invalid priority value.' });
-    }
+  // We have 3 possible use cases:
+  // 1. oldStatus == newStatus AND oldPriority == priority, do nothing
+  // 2. oldStatus == newStatus AND oldPriority != priority, reorder clients with the same status
+  // 3. oldStatus != newStatus, reorder clients in oldStatus and newStatus. If priority is provided, rearranged accordingly
 
-    
-    const clientsWithSameStatus = clients.filter(c => c.status === client.status && c.id !== id);
-    const conflictingPriorityClient = clientsWithSameStatus.find(c => c.priority === priority);
-
-    if (conflictingPriorityClient) {
-      return res.status(400).send({ error: 'Priority conflict with another client.' });
-    }
-
-    
-    client.priority = priority;
-    clientsWithSameStatus.forEach(c => {
-      if (c.priority >= priority) {
-        c.priority++;
-      }
-    });
+  if (oldStatus === newStatus && priority && oldPriority !== priority) {
+    const clientsWithDifferentStatus = clients.filter(client => client.status !== newStatus);
+    client.priority = priority - 0.5;
+    const clientsWithSameStatus = clients.filter(client => client.status === newStatus)
+      .sort((a, b) => a.priority - b.priority)
+      .map((client, index) => ({
+        ...client,
+        priority: index + 1,
+      }));
+    clients = [
+      ...clientsWithDifferentStatus,
+      ...clientsWithSameStatus,
+    ];
+  } else if (oldStatus !== newStatus) {
+    client.status = newStatus;
+    client.priority = priority ? priority - 0.5 : Number.MAX_SAFE_INTEGER;
+    const clientsWithDifferentStatus = clients.filter(client => client.status !== oldStatus && client.status !== newStatus);
+    const clientsWithOldStatus = clients.filter(client => client.status === oldStatus)
+      .sort((a, b) => a.priority - b.priority)
+      .map((client, index) => ({
+        ...client,
+        priority: index + 1,
+      }));
+    const clientsWithNewStatus = clients.filter(client => client.status === newStatus)
+      .sort((a, b) => a.priority - b.priority)
+      .map((client, index) => ({
+        ...client,
+        priority: index + 1,
+      }));
+    client.priority = clientsWithNewStatus.length;
+    clients = [
+      ...clientsWithDifferentStatus,
+      ...clientsWithOldStatus,
+      ...clientsWithNewStatus,
+    ];
   }
-
-  db.prepare('UPDATE clients SET status = ?, priority = ? WHERE id = ?').run(client.status, client.priority, id);
-
-  clients.sort((a, b) => {
-    if (a.status !== b.status) {
-      return a.status.localeCompare(b.status);
-    }
-    return a.priority - b.priority;
+ 
+  // Naive approach of updating the entire rows on the table
+  const updateStmt = db.prepare('update clients set status = ?, priority = ? where id = ?');
+  clients.forEach(client => {
+    updateStmt.run(client.status, client.priority, client.id);
   });
-} else {
-  return res.status(404).send({ error: 'Client not found.' });
-}
+ 
   return res.status(200).send(clients);
 });
 
